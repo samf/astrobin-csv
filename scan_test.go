@@ -32,6 +32,29 @@ func TestParseFrameLight(t *testing.T) {
 	}
 }
 
+func TestParseFrameTemperatureAndFNumber(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "light.fits", makeFITS([]fitsKeyword{
+		{"IMAGETYP", "'LIGHT'"},
+		{"FILTER", "'H'"},
+		{"EXPTIME", "300.0"},
+		{"AMBTEMP", "11.31"},
+		{"FOCRATIO", "6.0"},
+	}))
+	info, err := parseFrame(path)
+	if err != nil {
+		t.Fatalf("parseFrame: %v", err)
+	}
+	if info == nil {
+		t.Fatal("parseFrame returned nil")
+	}
+	if info.ambTemp == nil || *info.ambTemp != 11.31 {
+		t.Errorf("ambTemp = %v, want 11.31", info.ambTemp)
+	}
+	if info.fNumber == nil || *info.fNumber != 6.0 {
+		t.Errorf("fNumber = %v, want 6.0", info.fNumber)
+	}
+}
+
 func TestParseFrameSkipsNonLight(t *testing.T) {
 	path := writeFile(t, t.TempDir(), "dark.fits",
 		lightFITS("DARK", "H", 300.0, 100.0, -10.0, 1))
@@ -154,6 +177,18 @@ func TestMostCommon(t *testing.T) {
 			t.Errorf("got (%v, %v), want (2, true)", got, ok)
 		}
 	})
+}
+
+func TestMean(t *testing.T) {
+	if _, ok := mean(nil); ok {
+		t.Error("expected ok=false for empty slice")
+	}
+	if got, ok := mean([]float64{11.0, 12.0, 13.0}); !ok || got != 12.0 {
+		t.Errorf("mean = (%v, %v), want (12, true)", got, ok)
+	}
+	if got, _ := mean([]float64{-10, -5}); got != -7.5 {
+		t.Errorf("mean = %v, want -7.5", got)
+	}
 }
 
 func TestScanDirectory(t *testing.T) {

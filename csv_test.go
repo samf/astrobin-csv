@@ -35,7 +35,9 @@ func TestWriteCSV(t *testing.T) {
 			durations: []float64{300, 300, 300},
 			gains:     []float64{100, 100, 100},
 			binnings:  []int{1, 1, 1},
-			temps:     []float64{-10, -10, -9}, // mode -10
+			temps:     []float64{-10, -10, -9},     // mode -10
+			fNumbers:  []float64{6, 6, 6},          // mode 6.00
+			ambTemps:  []float64{11.0, 12.0, 13.0}, // mean 12.0
 		},
 		"L": {
 			count:     2,
@@ -43,6 +45,7 @@ func TestWriteCSV(t *testing.T) {
 			gains:     []float64{100, 100},
 			binnings:  []int{1, 1},
 			temps:     []float64{-10, -10},
+			// no fNumber / ambient temp -> those cells stay empty
 		},
 		"X": { // unmapped -> should be skipped with a warning
 			count:     1,
@@ -62,11 +65,13 @@ func TestWriteCSV(t *testing.T) {
 	}
 	got := string(data)
 
-	wantHeader := "filter,number,duration,binning,gain,sensorCooling,darks,flats,flatDarks,bias"
+	wantHeader := "filter,number,duration,binning,gain,sensorCooling,fNumber,darks,flats,flatDarks,bias,temperature"
 	// Rows are sorted by filter name: H before L. X is unmapped and omitted.
+	// H carries fNumber (6.00) and an averaged ambient temperature (12.0); L
+	// carries neither, so those cells are empty.
 	want := wantHeader + "\n" +
-		"43627,3,300.0000,1,100.00,-10,,,,\n" +
-		"33995,2,120.0000,1,100.00,-10,,,,\n"
+		"43627,3,300.0000,1,100.00,-10,6.00,,,,,12.0\n" +
+		"33995,2,120.0000,1,100.00,-10,,,,,,\n"
 	if got != want {
 		t.Errorf("CSV mismatch:\n got: %q\nwant: %q", got, want)
 	}
@@ -91,8 +96,8 @@ func TestWriteCSVOmitsMissingValues(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("expected header + 1 row, got %d lines: %q", len(lines), lines)
 	}
-	if lines[1] != "33995,5,,,,,,,," {
-		t.Errorf("row = %q, want %q", lines[1], "33995,5,,,,,,,,")
+	if lines[1] != "33995,5,,,,,,,,,," {
+		t.Errorf("row = %q, want %q", lines[1], "33995,5,,,,,,,,,,")
 	}
 }
 
@@ -118,9 +123,9 @@ func TestScanAndWriteCSV(t *testing.T) {
 	}
 
 	data, _ := os.ReadFile(out)
-	want := "filter,number,duration,binning,gain,sensorCooling,darks,flats,flatDarks,bias\n" +
-		"43627,2,300.0000,1,100.00,-10,,,,\n" +
-		"43628,1,600.0000,1,100.00,-10,,,,\n"
+	want := "filter,number,duration,binning,gain,sensorCooling,fNumber,darks,flats,flatDarks,bias,temperature\n" +
+		"43627,2,300.0000,1,100.00,-10,,,,,,\n" +
+		"43628,1,600.0000,1,100.00,-10,,,,,,\n"
 	if string(data) != want {
 		t.Errorf("pipeline CSV mismatch:\n got: %q\nwant: %q", string(data), want)
 	}

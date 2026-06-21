@@ -15,7 +15,9 @@ type frameInfo struct {
 	exptime    *float64
 	gain       *float64
 	binning    *int
-	ccdTemp    *float64
+	ccdTemp    *float64 // sensor temperature (CCD-TEMP / SET-TEMP)
+	ambTemp    *float64 // ambient air temperature (AMBTEMP)
+	fNumber    *float64 // focal ratio (FOCRATIO)
 	imagetyp   string
 }
 
@@ -25,7 +27,9 @@ type filterAccumulator struct {
 	durations []float64
 	gains     []float64
 	binnings  []int
-	temps     []float64
+	temps     []float64 // sensor temperatures
+	ambTemps  []float64 // ambient air temperatures
+	fNumbers  []float64 // focal ratios
 }
 
 // parseFrame reads a frame's header and extracts the fields we care about.
@@ -70,6 +74,8 @@ func parseFrame(path string) (*frameInfo, error) {
 	if ccdTemp == nil {
 		ccdTemp = headerFloat(header, "SET-TEMP")
 	}
+	ambTemp := headerFloat(header, "AMBTEMP")
+	fNumber := headerFloat(header, "FOCRATIO")
 
 	var binning *int
 	if b := headerFloat(header, "XBINNING"); b != nil {
@@ -83,6 +89,8 @@ func parseFrame(path string) (*frameInfo, error) {
 		gain:       gain,
 		binning:    binning,
 		ccdTemp:    ccdTemp,
+		ambTemp:    ambTemp,
+		fNumber:    fNumber,
 		imagetyp:   imagetyp,
 	}, nil
 }
@@ -162,6 +170,12 @@ func scanDirectory(root string) (map[string]*filterAccumulator, error) {
 		if info.ccdTemp != nil {
 			acc.temps = append(acc.temps, *info.ccdTemp)
 		}
+		if info.ambTemp != nil {
+			acc.ambTemps = append(acc.ambTemps, *info.ambTemp)
+		}
+		if info.fNumber != nil {
+			acc.fNumbers = append(acc.fNumbers, *info.fNumber)
+		}
 
 		if (i+1)%200 == 0 {
 			fmt.Printf("  ...%d/%d files processed\n", i+1, len(allFiles))
@@ -192,4 +206,18 @@ func mostCommon[T comparable](values []T) (T, bool) {
 		}
 	}
 	return best, true
+}
+
+// mean returns the arithmetic mean of values. The boolean is false when values
+// is empty. Used for continuous quantities (e.g. ambient temperature) where a
+// representative average is more meaningful than a mode.
+func mean(values []float64) (float64, bool) {
+	if len(values) == 0 {
+		return 0, false
+	}
+	var sum float64
+	for _, v := range values {
+		sum += v
+	}
+	return sum / float64(len(values)), true
 }

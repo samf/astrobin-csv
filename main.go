@@ -30,10 +30,12 @@ var csvFields = []string{
 	"binning",
 	"gain",
 	"sensorCooling",
+	"fNumber",
 	"darks",
 	"flats",
 	"flatDarks",
 	"bias",
+	"temperature",
 }
 
 var fitsExtensions = map[string]bool{".fits": true, ".fit": true, ".fts": true}
@@ -121,10 +123,12 @@ func writeCSV(accumulators map[string]*filterAccumulator, filterMap map[string]i
 			"binning":       "",
 			"gain":          "",
 			"sensorCooling": "",
+			"fNumber":       "",
 			"darks":         "",
 			"flats":         "",
 			"flatDarks":     "",
 			"bias":          "",
+			"temperature":   "",
 		}
 		if duration, ok := mostCommon(acc.durations); ok {
 			row["duration"] = fmt.Sprintf("%.4f", duration)
@@ -137,6 +141,14 @@ func writeCSV(accumulators map[string]*filterAccumulator, filterMap map[string]i
 		}
 		if temp, ok := mostCommon(acc.temps); ok {
 			row["sensorCooling"] = fmt.Sprintf("%d", roundToInt(temp))
+		}
+		// Focal ratio is a fixed optical property, so the mode is right.
+		if fNumber, ok := mostCommon(acc.fNumbers); ok {
+			row["fNumber"] = fmt.Sprintf("%.2f", fNumber)
+		}
+		// Ambient temperature drifts through the night; report the average.
+		if ambTemp, ok := mean(acc.ambTemps); ok {
+			row["temperature"] = fmt.Sprintf("%.1f", ambTemp)
 		}
 
 		cells := make([]string, len(csvFields))
