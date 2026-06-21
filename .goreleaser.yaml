@@ -1,0 +1,42 @@
+# GoReleaser configuration.
+# On a pushed tag (vX.Y.Z) the release workflow runs `goreleaser release` to
+# cross-compile the binaries and publish a GitHub release. A follow-up step in
+# the workflow then regenerates the Homebrew *formula* in the samf/homebrew-samf
+# tap from the release checksums (GoReleaser dropped its built-in formula
+# support in v2.16 in favor of macOS-only casks, which we don't want here).
+#
+# Docs: https://goreleaser.com
+version: 2
+
+project_name: astrobin-csv
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+
+archives:
+  - name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"

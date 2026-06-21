@@ -30,6 +30,9 @@ go.work
 # Default CSV output
 /acquisition.csv
 
+# GoReleaser build output
+/dist/
+
 ### macOS ###
 # General
 .DS_Store
