@@ -14,6 +14,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -43,7 +44,7 @@ var xisfExtensions = map[string]bool{".xisf": true}
 
 // CLI is the command-line interface, parsed by kong.
 var CLI struct {
-	Directory     string `arg:"" name:"directory" type:"existingdir" help:"Directory containing light frames (searched recursively)."`
+	Directory     string `arg:"" name:"directory" type:"existingdir" help:"Lights directory, or a session root containing a 'lights' subdirectory. Sibling directories (darks/, flats/, ...) are searched for calibration frames."`
 	Output        string `name:"output" short:"o" type:"path" default:"acquisition.csv" help:"Output CSV path."`
 	Config        string `name:"config" short:"c" type:"path" default:"~/.astrobin-csv.yaml" help:"YAML filter-name -> AstroBin-filter-ID config."`
 	NoCalibration bool   `name:"no-calibration" help:"Don't search sibling directories for dark/flat/bias/flat-dark frames."`
@@ -62,7 +63,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	accumulators, err := scanDirectory(CLI.Directory)
+	// If the user pointed at a session root (e.g. ".") that contains a lights/
+	// subdirectory, descend into it. This keeps light counts honest (no
+	// processed-copy double counting) and lets the sibling search find darks/,
+	// flats/, etc. next to lights/.
+	lightsDir := resolveLightsDir(CLI.Directory)
+	if lightsDir != CLI.Directory {
+		fmt.Printf("Using lights directory: %s\n", lightsDir)
+	}
+
+	accumulators, err := scanDirectory(lightsDir)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -88,7 +98,7 @@ func main() {
 
 	var calibration *calLibrary
 	if !CLI.NoCalibration {
-		calibration, err = scanCalibration(CLI.Directory)
+		calibration, err = scanCalibration(lightsDir)
 		if err != nil {
 			// Calibration is best-effort; warn but still write the CSV.
 			fmt.Fprintf(os.Stderr, "warning: could not scan for calibration frames: %v\n", err)
@@ -102,6 +112,24 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+// resolveLightsDir returns the directory that actually holds the light frames.
+// If dir contains a child directory named "lights" (case-insensitively), that
+// child is returned, so users can point the tool at a session root that also
+// holds darks/, flats/, ... as siblings of lights/. Otherwise dir is returned
+// unchanged.
+func resolveLightsDir(dir string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return dir
+	}
+	for _, e := range entries {
+		if e.IsDir() && strings.EqualFold(e.Name(), "lights") {
+			return filepath.Join(dir, e.Name())
+		}
+	}
+	return dir
 }
 
 // sortedKeys returns the keys of a filter-accumulator map in sorted order.

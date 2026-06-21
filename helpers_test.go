@@ -76,6 +76,16 @@ func makeXISF(kws map[string]string) []byte {
 	return out
 }
 
+// writeDir creates directory name inside dir and returns its full path.
+func writeDir(t *testing.T, dir, name string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatalf("MkdirAll %s: %v", path, err)
+	}
+	return path
+}
+
 // writeFile writes content to name inside dir, creating parent directories,
 // and returns the full path. It fails the test on error.
 func writeFile(t *testing.T, dir, name string, content []byte) string {
