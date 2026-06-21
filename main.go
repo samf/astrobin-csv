@@ -43,9 +43,10 @@ var xisfExtensions = map[string]bool{".xisf": true}
 
 // CLI is the command-line interface, parsed by kong.
 var CLI struct {
-	Directory string `arg:"" name:"directory" type:"existingdir" help:"Directory containing light frames (searched recursively)."`
-	Output    string `name:"output" short:"o" type:"path" default:"acquisition.csv" help:"Output CSV path."`
-	Config    string `name:"config" short:"c" type:"path" default:"~/.astrobin-csv.yaml" help:"YAML filter-name -> AstroBin-filter-ID config."`
+	Directory     string `arg:"" name:"directory" type:"existingdir" help:"Directory containing light frames (searched recursively)."`
+	Output        string `name:"output" short:"o" type:"path" default:"acquisition.csv" help:"Output CSV path."`
+	Config        string `name:"config" short:"c" type:"path" default:"~/.astrobin-csv.yaml" help:"YAML filter-name -> AstroBin-filter-ID config."`
+	NoCalibration bool   `name:"no-calibration" help:"Don't search sibling directories for dark/flat/bias/flat-dark frames."`
 }
 
 func main() {
@@ -85,7 +86,19 @@ func main() {
 		fmt.Printf("  %-10s %4d frames  x %6s  (~%.2fh)\n", name, acc.count, durStr, totalHours)
 	}
 
-	if err := writeCSV(accumulators, filterMap, CLI.Output); err != nil {
+	var calibration *calLibrary
+	if !CLI.NoCalibration {
+		calibration, err = scanCalibration(CLI.Directory)
+		if err != nil {
+			// Calibration is best-effort; warn but still write the CSV.
+			fmt.Fprintf(os.Stderr, "warning: could not scan for calibration frames: %v\n", err)
+		} else if calibration.total() > 0 {
+			fmt.Printf("Calibration frames found: %d darks, %d flats, %d flat-darks, %d bias\n",
+				len(calibration.darks), len(calibration.flats), len(calibration.flatDarks), len(calibration.bias))
+		}
+	}
+
+	if err := writeCSV(accumulators, filterMap, calibration, CLI.Output); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -101,8 +114,9 @@ func sortedKeys(m map[string]*filterAccumulator) []string {
 	return keys
 }
 
-// writeCSV writes the aggregated per-filter rows to outputPath.
-func writeCSV(accumulators map[string]*filterAccumulator, filterMap map[string]int, outputPath string) error {
+// writeCSV writes the aggregated per-filter rows to outputPath. calibration may
+// be nil, in which case the dark/flat/flatDark/bias columns are left empty.
+func writeCSV(accumulators map[string]*filterAccumulator, filterMap map[string]int, calibration *calLibrary, outputPath string) error {
 	lines := []string{strings.Join(csvFields, ",")}
 
 	var unmapped []string
@@ -149,6 +163,21 @@ func writeCSV(accumulators map[string]*filterAccumulator, filterMap map[string]i
 		// Ambient temperature drifts through the night; report the average.
 		if ambTemp, ok := mean(acc.ambTemps); ok {
 			row["temperature"] = fmt.Sprintf("%.1f", ambTemp)
+		}
+		if calibration != nil {
+			darks, flats, flatDarks, bias := calibration.countsFor(filterName, acc)
+			if darks > 0 {
+				row["darks"] = fmt.Sprintf("%d", darks)
+			}
+			if flats > 0 {
+				row["flats"] = fmt.Sprintf("%d", flats)
+			}
+			if flatDarks > 0 {
+				row["flatDarks"] = fmt.Sprintf("%d", flatDarks)
+			}
+			if bias > 0 {
+				row["bias"] = fmt.Sprintf("%d", bias)
+			}
 		}
 
 		cells := make([]string, len(csvFields))

@@ -32,39 +32,25 @@ type filterAccumulator struct {
 	fNumbers  []float64 // focal ratios
 }
 
-// parseFrame reads a frame's header and extracts the fields we care about.
-// It returns nil (with no error) for files that aren't light frames or that
-// lack a usable filter name.
-func parseFrame(path string) (*frameInfo, error) {
+// readHeaderFor reads the header of a FITS or XISF file. ok is false for files
+// with an extension we don't recognize.
+func readHeaderFor(path string) (header map[string]string, ok bool, err error) {
 	suffix := strings.ToLower(filepath.Ext(path))
-
-	var header map[string]string
-	var err error
 	switch {
 	case fitsExtensions[suffix]:
 		header, err = readFITSHeader(path)
 	case xisfExtensions[suffix]:
 		header, err = readXISFHeader(path)
 	default:
-		return nil, nil
+		return nil, false, nil
 	}
-	if err != nil {
-		fmt.Printf("  [skip] Could not read header from %s: %v\n", filepath.Base(path), err)
-		return nil, nil
-	}
+	return header, true, err
+}
 
-	imagetyp := strings.ToUpper(strings.TrimSpace(header["IMAGETYP"]))
-	// NINA usually writes "LIGHT" but accept "LIGHT FRAME" variants too.
-	if !strings.Contains(imagetyp, "LIGHT") {
-		return nil, nil
-	}
-
-	filterName := strings.TrimSpace(header["FILTER"])
-	if filterName == "" {
-		fmt.Printf("  [skip] No FILTER keyword in %s\n", filepath.Base(path))
-		return nil, nil
-	}
-
+// extractFrame pulls the fields we care about from a parsed header. The
+// returned frameInfo is type-agnostic: filterName and imagetyp may be empty,
+// and callers decide whether a frame is usable for their purpose.
+func extractFrame(header map[string]string) *frameInfo {
 	exptime := headerFloat(header, "EXPTIME")
 	if exptime == nil {
 		exptime = headerFloat(header, "EXPOSURE")
@@ -84,15 +70,42 @@ func parseFrame(path string) (*frameInfo, error) {
 	}
 
 	return &frameInfo{
-		filterName: filterName,
+		filterName: strings.TrimSpace(header["FILTER"]),
 		exptime:    exptime,
 		gain:       gain,
 		binning:    binning,
 		ccdTemp:    ccdTemp,
 		ambTemp:    ambTemp,
 		fNumber:    fNumber,
-		imagetyp:   imagetyp,
-	}, nil
+		imagetyp:   strings.ToUpper(strings.TrimSpace(header["IMAGETYP"])),
+	}
+}
+
+// parseFrame reads a frame's header and extracts the fields we care about.
+// It returns nil (with no error) for files that aren't light frames or that
+// lack a usable filter name.
+func parseFrame(path string) (*frameInfo, error) {
+	header, ok, err := readHeaderFor(path)
+	if !ok {
+		return nil, nil
+	}
+	if err != nil {
+		fmt.Printf("  [skip] Could not read header from %s: %v\n", filepath.Base(path), err)
+		return nil, nil
+	}
+
+	info := extractFrame(header)
+
+	// NINA usually writes "LIGHT" but accept "LIGHT FRAME" variants too;
+	// exclude PixInsight master integrations ("Master Light").
+	if !strings.Contains(info.imagetyp, "LIGHT") || strings.Contains(info.imagetyp, "MASTER") {
+		return nil, nil
+	}
+	if info.filterName == "" {
+		fmt.Printf("  [skip] No FILTER keyword in %s\n", filepath.Base(path))
+		return nil, nil
+	}
+	return info, nil
 }
 
 // headerFloat parses a header value as a float, returning nil if absent or

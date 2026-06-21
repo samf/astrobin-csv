@@ -55,7 +55,7 @@ func TestWriteCSV(t *testing.T) {
 	filterMap := map[string]int{"H": 43627, "L": 33995}
 
 	out := filepath.Join(t.TempDir(), "acquisition.csv")
-	if err := writeCSV(accumulators, filterMap, out); err != nil {
+	if err := writeCSV(accumulators, filterMap, nil, out); err != nil {
 		t.Fatalf("writeCSV: %v", err)
 	}
 
@@ -88,7 +88,7 @@ func TestWriteCSVOmitsMissingValues(t *testing.T) {
 	filterMap := map[string]int{"L": 33995}
 
 	out := filepath.Join(t.TempDir(), "acquisition.csv")
-	if err := writeCSV(accumulators, filterMap, out); err != nil {
+	if err := writeCSV(accumulators, filterMap, nil, out); err != nil {
 		t.Fatalf("writeCSV: %v", err)
 	}
 	data, _ := os.ReadFile(out)
@@ -118,7 +118,7 @@ func TestScanAndWriteCSV(t *testing.T) {
 	}
 
 	out := filepath.Join(t.TempDir(), "acquisition.csv")
-	if err := writeCSV(acc, map[string]int{"H": 43627, "O": 43628}, out); err != nil {
+	if err := writeCSV(acc, map[string]int{"H": 43627, "O": 43628}, nil, out); err != nil {
 		t.Fatalf("writeCSV: %v", err)
 	}
 
