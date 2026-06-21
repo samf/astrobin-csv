@@ -96,9 +96,12 @@ func parseFrame(path string) (*frameInfo, error) {
 
 	info := extractFrame(header)
 
-	// NINA usually writes "LIGHT" but accept "LIGHT FRAME" variants too;
-	// exclude PixInsight master integrations ("Master Light").
-	if !strings.Contains(info.imagetyp, "LIGHT") || strings.Contains(info.imagetyp, "MASTER") {
+	// A frame counts as a light if it's explicitly typed LIGHT, or if it has no
+	// IMAGETYP at all -- some cameras (e.g. the Dwarf 3) omit it, and we rely on
+	// the frame living in the lights directory. Exclude PixInsight master
+	// integrations ("Master Light").
+	isLight := info.imagetyp == "" || strings.Contains(info.imagetyp, "LIGHT")
+	if !isLight || strings.Contains(info.imagetyp, "MASTER") {
 		return nil, nil
 	}
 	if info.filterName == "" {

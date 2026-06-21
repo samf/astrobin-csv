@@ -54,6 +54,22 @@ func lightFITS(imagetyp, filter string, exptime, gain, temp float64, xbin int) [
 	})
 }
 
+// dwarfFITS builds the bytes of a Dwarf 3-style FITS file: no IMAGETYP keyword
+// and an uncooled DET-TEMP instead of CCD-TEMP/SET-TEMP. A "" filter is written
+// as an empty FILTER value (as the Dwarf does for darks).
+func dwarfFITS(filter string, exptimeSec, gain, detTemp, xbin int) []byte {
+	return makeFITS([]fitsKeyword{
+		{"SIMPLE", "T"},
+		{"NAXIS", "2"},
+		{"EXPTIME", fmt.Sprintf("%d.", exptimeSec)}, // Dwarf writes e.g. "60."
+		{"GAIN", fmt.Sprintf("%d", gain)},
+		{"XBINNING", fmt.Sprintf("%d", xbin)},
+		{"DET-TEMP", fmt.Sprintf("%d", detTemp)},
+		{"FILTER", fmt.Sprintf("'%s'", filter)},
+		{"CAMERA", "'TELE'"},
+	})
+}
+
 // makeXISF builds the bytes of a monolithic XISF file whose XML header carries
 // the given FITSKeyword name/value pairs.
 func makeXISF(kws map[string]string) []byte {

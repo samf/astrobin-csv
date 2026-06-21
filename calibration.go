@@ -23,23 +23,42 @@ func (l *calLibrary) total() int {
 	return len(l.darks) + len(l.flats) + len(l.flatDarks) + len(l.bias)
 }
 
-// classifyCalibration maps an IMAGETYP string to one of our calibration bucket
-// names, or "" for frames we don't count (lights and PixInsight masters).
-func classifyCalibration(imagetyp string) string {
+// classifyCalibration decides which calibration bucket a frame belongs to,
+// returning "" for frames we don't count (lights and PixInsight masters). It
+// prefers the IMAGETYP keyword, but falls back to the name of the directory the
+// frame was found in when IMAGETYP is absent -- some cameras (e.g. the Dwarf 3)
+// write no IMAGETYP, so the user's darks/, flats/, ... directories are the only
+// signal.
+func classifyCalibration(imagetyp, dirName string) string {
 	t := strings.ToUpper(imagetyp)
 	// "Master Dark"/"Master Light" etc. are stacked integrations, not
 	// individual subs -- never count them.
 	if strings.Contains(t, "MASTER") || strings.Contains(t, "LIGHT") {
 		return ""
 	}
-	flat := strings.Contains(t, "FLAT")
-	dark := strings.Contains(t, "DARK")
+	if c := calTypeFromName(t); c != "" {
+		return c
+	}
+	// No usable IMAGETYP -- fall back to the directory name, but never treat a
+	// stray lights directory as calibration.
+	d := strings.ToUpper(dirName)
+	if strings.Contains(d, "LIGHT") {
+		return ""
+	}
+	return calTypeFromName(d)
+}
+
+// calTypeFromName classifies an already-uppercased string (an IMAGETYP value or
+// a directory name) into a calibration bucket.
+func calTypeFromName(s string) string {
+	flat := strings.Contains(s, "FLAT")
+	dark := strings.Contains(s, "DARK")
 	switch {
-	case flat && dark: // DARKFLAT / "FLAT DARK"
+	case flat && dark: // DARKFLAT / "FLAT DARK" / "darkflats"
 		return "flatdark"
 	case flat:
 		return "flat"
-	case strings.Contains(t, "BIAS"):
+	case strings.Contains(s, "BIAS"):
 		return "bias"
 	case dark:
 		return "dark"
@@ -66,7 +85,10 @@ func scanCalibration(lightsDir string) (*calLibrary, error) {
 		return nil, fmt.Errorf("reading %s: %w", parent, err)
 	}
 
-	var calFiles []string
+	// Each candidate carries the name of the top-level sibling directory it came
+	// from, so we can classify by directory when IMAGETYP is missing.
+	type candidate struct{ path, dir string }
+	var candidates []candidate
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
@@ -75,6 +97,7 @@ func scanCalibration(lightsDir string) (*calLibrary, error) {
 		if sibling == lightsAbs {
 			continue // that's the lights directory itself
 		}
+		dirName := e.Name()
 		_ = filepath.WalkDir(sibling, func(p string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return nil // tolerate unreadable subtrees
@@ -84,25 +107,25 @@ func scanCalibration(lightsDir string) (*calLibrary, error) {
 			}
 			suffix := strings.ToLower(filepath.Ext(p))
 			if fitsExtensions[suffix] || xisfExtensions[suffix] {
-				calFiles = append(calFiles, p)
+				candidates = append(candidates, candidate{p, dirName})
 			}
 			return nil
 		})
 	}
 
-	if len(calFiles) == 0 {
+	if len(candidates) == 0 {
 		return lib, nil
 	}
-	sort.Strings(calFiles)
-	fmt.Printf("Scanning %d files in sibling directories for calibration frames...\n", len(calFiles))
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].path < candidates[j].path })
+	fmt.Printf("Scanning %d files in sibling directories for calibration frames...\n", len(candidates))
 
-	for _, p := range calFiles {
-		header, ok, err := readHeaderFor(p)
+	for _, c := range candidates {
+		header, ok, err := readHeaderFor(c.path)
 		if !ok || err != nil {
 			continue
 		}
 		info := extractFrame(header)
-		switch classifyCalibration(info.imagetyp) {
+		switch classifyCalibration(info.imagetyp, c.dir) {
 		case "dark":
 			lib.darks = append(lib.darks, info)
 		case "flat":
@@ -116,60 +139,58 @@ func scanCalibration(lightsDir string) (*calLibrary, error) {
 	return lib, nil
 }
 
-// darkKey identifies the exposure/gain/temperature/binning combination a dark
-// frame matches. Exposure is held in tenths of a second and temperature is
-// rounded so the sensor's actual temperature (e.g. -9.9) matches its setpoint
-// (-10).
+// darkKey identifies the exposure/gain/binning combination a dark frame
+// matches. Exposure is held in tenths of a second. Temperature is deliberately
+// excluded: cooled cameras hold a stable setpoint (so it adds no discrimination),
+// while uncooled cameras (e.g. the Dwarf 3) take darks at a different ambient
+// temperature than the lights, so matching on it would reject every dark.
 type darkKey struct {
 	expDeci int
 	gain    int
-	temp    int
 	binning int
 }
 
 // biasKey is like darkKey but exposure-independent (bias frames are ~0s).
 type biasKey struct {
 	gain    int
-	temp    int
 	binning int
 }
 
 func deciSeconds(s float64) int { return int(math.Round(s * 10)) }
 
 func darkKeyOf(f *frameInfo) (darkKey, bool) {
-	if f.exptime == nil || f.gain == nil || f.ccdTemp == nil || f.binning == nil {
+	if f.exptime == nil || f.gain == nil || f.binning == nil {
 		return darkKey{}, false
 	}
-	return darkKey{deciSeconds(*f.exptime), roundToInt(*f.gain), roundToInt(*f.ccdTemp), *f.binning}, true
+	return darkKey{deciSeconds(*f.exptime), roundToInt(*f.gain), *f.binning}, true
 }
 
 func biasKeyOf(f *frameInfo) (biasKey, bool) {
-	if f.gain == nil || f.ccdTemp == nil || f.binning == nil {
+	if f.gain == nil || f.binning == nil {
 		return biasKey{}, false
 	}
-	return biasKey{roundToInt(*f.gain), roundToInt(*f.ccdTemp), *f.binning}, true
+	return biasKey{roundToInt(*f.gain), *f.binning}, true
 }
 
 // countsFor returns the calibration-frame counts attributable to one light
-// filter. Darks are matched to the filter's representative exposure/gain/temp/
-// binning; bias by gain/temp/binning (exposure-independent); flats and
-// flat-darks by filter name.
+// filter. Darks are matched to the filter's representative exposure/gain/
+// binning; bias by gain/binning (exposure-independent); flats and flat-darks by
+// filter name.
 func (l *calLibrary) countsFor(filterName string, acc *filterAccumulator) (darks, flats, flatDarks, bias int) {
 	expF, okE := mostCommon(acc.durations)
 	gainF, okG := mostCommon(acc.gains)
-	tempF, okT := mostCommon(acc.temps)
 	binF, okB := mostCommon(acc.binnings)
 
-	if okE && okG && okT && okB {
-		want := darkKey{deciSeconds(expF), roundToInt(gainF), roundToInt(tempF), binF}
+	if okE && okG && okB {
+		want := darkKey{deciSeconds(expF), roundToInt(gainF), binF}
 		for _, d := range l.darks {
 			if k, ok := darkKeyOf(d); ok && k == want {
 				darks++
 			}
 		}
 	}
-	if okG && okT && okB {
-		want := biasKey{roundToInt(gainF), roundToInt(tempF), binF}
+	if okG && okB {
+		want := biasKey{roundToInt(gainF), binF}
 		for _, b := range l.bias {
 			if k, ok := biasKeyOf(b); ok && k == want {
 				bias++
