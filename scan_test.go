@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -226,6 +228,35 @@ func TestScanDirectory(t *testing.T) {
 	// Temps for H: -10, -10, -9 -> mode -10.
 	if temp, _ := mostCommon(acc["H"].temps); temp != -10.0 {
 		t.Errorf("H temp mode = %v, want -10", temp)
+	}
+}
+
+func TestScanDirectoryFollowsSymlinks(t *testing.T) {
+	// The real frames live outside the scanned directory; the scanned lights
+	// directory reaches them only through a symlink -- both a symlinked
+	// subdirectory and a symlinked individual file.
+	store := t.TempDir()
+	writeFile(t, store, "night1/ha_0.fits", lightFITS("LIGHT", "H", 300.0, 100.0, -10.0, 1))
+	writeFile(t, store, "night1/ha_1.fits", lightFITS("LIGHT", "H", 300.0, 100.0, -10.0, 1))
+	loose := writeFile(t, store, "loose/l_0.fits", lightFITS("LIGHT", "L", 120.0, 100.0, -10.0, 1))
+
+	lights := t.TempDir()
+	if err := os.Symlink(filepath.Join(store, "night1"), filepath.Join(lights, "night1")); err != nil {
+		t.Fatalf("symlink dir: %v", err)
+	}
+	if err := os.Symlink(loose, filepath.Join(lights, "l_0.fits")); err != nil {
+		t.Fatalf("symlink file: %v", err)
+	}
+
+	acc, err := scanDirectory(lights)
+	if err != nil {
+		t.Fatalf("scanDirectory: %v", err)
+	}
+	if acc["H"] == nil || acc["H"].count != 2 {
+		t.Errorf("H count = %v, want 2", acc["H"])
+	}
+	if acc["L"] == nil || acc["L"].count != 1 {
+		t.Errorf("L count = %v, want 1", acc["L"])
 	}
 }
 

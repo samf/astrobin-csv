@@ -125,8 +125,9 @@ func resolveLightsDir(dir string) string {
 		return dir
 	}
 	for _, e := range entries {
-		if e.IsDir() && strings.EqualFold(e.Name(), "lights") {
-			return filepath.Join(dir, e.Name())
+		child := filepath.Join(dir, e.Name())
+		if strings.EqualFold(e.Name(), "lights") && isDir(child) {
+			return child
 		}
 	}
 	return dir

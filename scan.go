@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"io/fs"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -129,23 +129,75 @@ func headerFloat(header map[string]string, key string) *float64 {
 	return &f
 }
 
+// isDir reports whether path is a directory, following symlinks. Unlike
+// fs.DirEntry.IsDir (which describes the link itself), this resolves a symlink
+// to its target, so a symlinked directory is reported as a directory.
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+// walkFiles walks the directory tree rooted at root and calls fn for every
+// regular file it finds. Unlike filepath.WalkDir, it follows symlinks -- both a
+// symlinked root and symlinked subdirectories -- so users can point the tool at
+// a session directory whose lights/, darks/, ... are symlinks to frames stored
+// elsewhere. Cycles introduced by symlinks are broken by tracking the resolved
+// (real) path of each directory already visited.
+func walkFiles(root string, fn func(path string)) error {
+	visited := map[string]bool{}
+
+	var walk func(dir string, top bool) error
+	walk = func(dir string, top bool) error {
+		real, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			if top {
+				return err
+			}
+			return nil // tolerate broken/unreadable links deeper in the tree
+		}
+		if visited[real] {
+			return nil
+		}
+		visited[real] = true
+
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			if top {
+				return err
+			}
+			return nil
+		}
+		for _, e := range entries {
+			p := filepath.Join(dir, e.Name())
+			// os.Stat follows symlinks, so a link to a directory recurses and a
+			// link to a file is treated as that file.
+			info, err := os.Stat(p)
+			if err != nil {
+				continue // broken symlink or unreadable entry
+			}
+			if info.IsDir() {
+				if err := walk(p, false); err != nil {
+					return err
+				}
+				continue
+			}
+			fn(p)
+		}
+		return nil
+	}
+	return walk(root, true)
+}
+
 // scanDirectory walks the directory tree and accumulates stats per filter.
 func scanDirectory(root string) (map[string]*filterAccumulator, error) {
 	accumulators := map[string]*filterAccumulator{}
 
 	var allFiles []string
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
+	err := walkFiles(root, func(path string) {
 		suffix := strings.ToLower(filepath.Ext(path))
 		if fitsExtensions[suffix] || xisfExtensions[suffix] {
 			allFiles = append(allFiles, path)
 		}
-		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("scanning %s: %w", root, err)

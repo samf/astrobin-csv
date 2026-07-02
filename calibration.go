@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
@@ -90,26 +89,19 @@ func scanCalibration(lightsDir string) (*calLibrary, error) {
 	type candidate struct{ path, dir string }
 	var candidates []candidate
 	for _, e := range entries {
-		if !e.IsDir() {
+		sibling := filepath.Join(parent, e.Name())
+		if !isDir(sibling) { // follows symlinks, so symlinked siblings count
 			continue
 		}
-		sibling := filepath.Join(parent, e.Name())
 		if sibling == lightsAbs {
 			continue // that's the lights directory itself
 		}
 		dirName := e.Name()
-		_ = filepath.WalkDir(sibling, func(p string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return nil // tolerate unreadable subtrees
-			}
-			if d.IsDir() {
-				return nil
-			}
+		_ = walkFiles(sibling, func(p string) {
 			suffix := strings.ToLower(filepath.Ext(p))
 			if fitsExtensions[suffix] || xisfExtensions[suffix] {
 				candidates = append(candidates, candidate{p, dirName})
 			}
-			return nil
 		})
 	}
 
