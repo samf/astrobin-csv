@@ -253,6 +253,30 @@ func scanDirectory(root string) (map[string]*filterAccumulator, error) {
 	return accumulators, nil
 }
 
+// merge folds other into acc, summing the frame count and concatenating the
+// per-frame stat slices so the aggregate mode/mean is computed over all frames.
+func (acc *filterAccumulator) merge(other *filterAccumulator) {
+	acc.count += other.count
+	acc.durations = append(acc.durations, other.durations...)
+	acc.gains = append(acc.gains, other.gains...)
+	acc.binnings = append(acc.binnings, other.binnings...)
+	acc.temps = append(acc.temps, other.temps...)
+	acc.ambTemps = append(acc.ambTemps, other.ambTemps...)
+	acc.fNumbers = append(acc.fNumbers, other.fNumbers...)
+}
+
+// mergeAccumulators folds src into dst, combining accumulators that share a
+// filter name so frames from several directories are summed into one row.
+func mergeAccumulators(dst, src map[string]*filterAccumulator) {
+	for name, acc := range src {
+		if existing := dst[name]; existing != nil {
+			existing.merge(acc)
+		} else {
+			dst[name] = acc
+		}
+	}
+}
+
 // mostCommon returns the most frequent value in values, breaking ties in favor
 // of the value that appears earliest. The boolean is false when values is
 // empty.

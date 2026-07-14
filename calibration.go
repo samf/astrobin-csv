@@ -22,6 +22,15 @@ func (l *calLibrary) total() int {
 	return len(l.darks) + len(l.flats) + len(l.flatDarks) + len(l.bias)
 }
 
+// merge folds other's calibration frames into l, so calibration discovered
+// alongside several lights directories is pooled before matching to filters.
+func (l *calLibrary) merge(other *calLibrary) {
+	l.darks = append(l.darks, other.darks...)
+	l.flats = append(l.flats, other.flats...)
+	l.flatDarks = append(l.flatDarks, other.flatDarks...)
+	l.bias = append(l.bias, other.bias...)
+}
+
 // classifyCalibration decides which calibration bucket a frame belongs to,
 // returning "" for frames we don't count (lights and PixInsight masters). It
 // prefers the IMAGETYP keyword, but falls back to the name of the directory the

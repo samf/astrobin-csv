@@ -44,10 +44,10 @@ var xisfExtensions = map[string]bool{".xisf": true}
 
 // CLI is the command-line interface, parsed by kong.
 var CLI struct {
-	Directory     string `arg:"" name:"directory" type:"existingdir" help:"Lights directory, or a session root containing a 'lights' subdirectory. Sibling directories (darks/, flats/, ...) are searched for calibration frames."`
-	Output        string `name:"output" short:"o" type:"path" default:"acquisition.csv" help:"Output CSV path."`
-	Config        string `name:"config" short:"c" type:"path" default:"~/.astrobin-csv.yaml" help:"YAML filter-name -> AstroBin-filter-ID config."`
-	NoCalibration bool   `name:"no-calibration" help:"Don't search sibling directories for dark/flat/bias/flat-dark frames."`
+	Directory     []string `arg:"" name:"directory" type:"existingdir" help:"One or more lights directories, or session roots containing a 'lights' subdirectory. Multiple directories are summed as though the frames lived in one. Sibling directories (darks/, flats/, ...) are searched for calibration frames."`
+	Output        string   `name:"output" short:"o" type:"path" default:"acquisition.csv" help:"Output CSV path."`
+	Config        string   `name:"config" short:"c" type:"path" default:"~/.astrobin-csv.yaml" help:"YAML filter-name -> AstroBin-filter-ID config."`
+	NoCalibration bool     `name:"no-calibration" help:"Don't search sibling directories for dark/flat/bias/flat-dark frames."`
 }
 
 func main() {
@@ -63,19 +63,41 @@ func main() {
 		os.Exit(1)
 	}
 
-	// If the user pointed at a session root (e.g. ".") that contains a lights/
-	// subdirectory, descend into it. This keeps light counts honest (no
-	// processed-copy double counting) and lets the sibling search find darks/,
-	// flats/, etc. next to lights/.
-	lightsDir := resolveLightsDir(CLI.Directory)
-	if lightsDir != CLI.Directory {
-		fmt.Printf("Using lights directory: %s\n", lightsDir)
+	// Accumulate across every directory the user gave us, summing frames as
+	// though they all lived in one place. calibration stays nil when the user
+	// opted out, so writeCSV leaves the calibration columns empty.
+	accumulators := map[string]*filterAccumulator{}
+	var calibration *calLibrary
+	if !CLI.NoCalibration {
+		calibration = &calLibrary{}
 	}
 
-	accumulators, err := scanDirectory(lightsDir)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	for _, dir := range CLI.Directory {
+		// If the user pointed at a session root (e.g. ".") that contains a lights/
+		// subdirectory, descend into it. This keeps light counts honest (no
+		// processed-copy double counting) and lets the sibling search find darks/,
+		// flats/, etc. next to lights/.
+		lightsDir := resolveLightsDir(dir)
+		if lightsDir != dir {
+			fmt.Printf("Using lights directory: %s\n", lightsDir)
+		}
+
+		dirAccumulators, err := scanDirectory(lightsDir)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		mergeAccumulators(accumulators, dirAccumulators)
+
+		if calibration != nil {
+			cal, err := scanCalibration(lightsDir)
+			if err != nil {
+				// Calibration is best-effort; warn but still write the CSV.
+				fmt.Fprintf(os.Stderr, "warning: could not scan for calibration frames: %v\n", err)
+			} else {
+				calibration.merge(cal)
+			}
+		}
 	}
 
 	if len(accumulators) == 0 {
@@ -96,16 +118,9 @@ func main() {
 		fmt.Printf("  %-10s %4d frames  x %6s  (~%.2fh)\n", name, acc.count, durStr, totalHours)
 	}
 
-	var calibration *calLibrary
-	if !CLI.NoCalibration {
-		calibration, err = scanCalibration(lightsDir)
-		if err != nil {
-			// Calibration is best-effort; warn but still write the CSV.
-			fmt.Fprintf(os.Stderr, "warning: could not scan for calibration frames: %v\n", err)
-		} else if calibration.total() > 0 {
-			fmt.Printf("Calibration frames found: %d darks, %d flats, %d flat-darks, %d bias\n",
-				len(calibration.darks), len(calibration.flats), len(calibration.flatDarks), len(calibration.bias))
-		}
+	if calibration != nil && calibration.total() > 0 {
+		fmt.Printf("Calibration frames found: %d darks, %d flats, %d flat-darks, %d bias\n",
+			len(calibration.darks), len(calibration.flats), len(calibration.flatDarks), len(calibration.bias))
 	}
 
 	if err := writeCSV(accumulators, filterMap, calibration, CLI.Output); err != nil {

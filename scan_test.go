@@ -260,6 +260,85 @@ func TestScanDirectoryFollowsSymlinks(t *testing.T) {
 	}
 }
 
+// TestMergeAccumulators exercises the multi-directory path: scanning two
+// directories independently and summing them must behave as though the frames
+// lived in one directory. In particular the per-frame stats are pooled, so the
+// combined duration mode is recomputed over all frames rather than picked from
+// either directory alone.
+func TestMergeAccumulators(t *testing.T) {
+	dir1 := t.TempDir()
+	// dir1: H is mostly 300s (mode 300 on its own), plus one L.
+	writeFile(t, dir1, "h0.fits", lightFITS("LIGHT", "H", 300.0, 100.0, -10.0, 1))
+	writeFile(t, dir1, "h1.fits", lightFITS("LIGHT", "H", 300.0, 100.0, -10.0, 1))
+	writeFile(t, dir1, "h2.fits", lightFITS("LIGHT", "H", 120.0, 100.0, -10.0, 1))
+	writeFile(t, dir1, "l0.fits", lightFITS("LIGHT", "L", 120.0, 100.0, -10.0, 1))
+
+	dir2 := t.TempDir()
+	// dir2: H is all 120s (mode 120 on its own); enough to flip the combined mode.
+	writeFile(t, dir2, "h0.fits", lightFITS("LIGHT", "H", 120.0, 100.0, -10.0, 1))
+	writeFile(t, dir2, "h1.fits", lightFITS("LIGHT", "H", 120.0, 100.0, -10.0, 1))
+	writeFile(t, dir2, "h2.fits", lightFITS("LIGHT", "H", 120.0, 100.0, -10.0, 1))
+
+	acc1, err := scanDirectory(dir1)
+	if err != nil {
+		t.Fatalf("scanDirectory dir1: %v", err)
+	}
+	acc2, err := scanDirectory(dir2)
+	if err != nil {
+		t.Fatalf("scanDirectory dir2: %v", err)
+	}
+
+	combined := map[string]*filterAccumulator{}
+	mergeAccumulators(combined, acc1)
+	mergeAccumulators(combined, acc2)
+
+	if len(combined) != 2 {
+		t.Fatalf("got %d filters, want 2 (H, L): %v", len(combined), combined)
+	}
+	if combined["H"].count != 6 {
+		t.Errorf("H count = %d, want 6 (3 + 3)", combined["H"].count)
+	}
+	if combined["L"].count != 1 {
+		t.Errorf("L count = %d, want 1 (only in dir1)", combined["L"].count)
+	}
+	// Combined durations: 300x2, 120x4 -> mode 120, which matches neither the
+	// dir1-only mode (300). Proves the stat slices are pooled, not pre-collapsed.
+	if dur, _ := mostCommon(combined["H"].durations); dur != 120.0 {
+		t.Errorf("H combined duration mode = %v, want 120", dur)
+	}
+}
+
+// TestCalLibraryMerge checks that calibration frames from several directories
+// are pooled before they're matched to filters.
+func TestCalLibraryMerge(t *testing.T) {
+	lib := &calLibrary{}
+	lib.merge(&calLibrary{
+		darks: []*frameInfo{calFrame(300, 78, -10, 1, "D", "DARK")},
+		flats: []*frameInfo{calFrame(2.5, 78, -10, 1, "H", "FLAT")},
+	})
+	lib.merge(&calLibrary{
+		darks:     []*frameInfo{calFrame(300, 78, -10, 1, "D", "DARK")},
+		flatDarks: []*frameInfo{calFrame(2.5, 78, -10, 1, "H", "DARKFLAT")},
+		bias:      []*frameInfo{calFrame(0, 78, -10, 1, "B", "BIAS")},
+	})
+
+	if len(lib.darks) != 2 {
+		t.Errorf("darks = %d, want 2", len(lib.darks))
+	}
+	if len(lib.flats) != 1 {
+		t.Errorf("flats = %d, want 1", len(lib.flats))
+	}
+	if len(lib.flatDarks) != 1 {
+		t.Errorf("flatDarks = %d, want 1", len(lib.flatDarks))
+	}
+	if len(lib.bias) != 1 {
+		t.Errorf("bias = %d, want 1", len(lib.bias))
+	}
+	if lib.total() != 5 {
+		t.Errorf("total = %d, want 5", lib.total())
+	}
+}
+
 func TestScanDirectoryEmpty(t *testing.T) {
 	acc, err := scanDirectory(t.TempDir())
 	if err != nil {
